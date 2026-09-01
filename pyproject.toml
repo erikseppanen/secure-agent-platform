@@ -1,7 +1,7 @@
 [project]
 name = "sap"
 version = "0.1.0"
-description = "Add your description here"
+description = "Provider-neutral secure agent platform"
 readme = "README.md"
 authors = [
     { name = "Erik Seppanen", email = "esep@protonmail.com" }
@@ -9,6 +9,7 @@ authors = [
 requires-python = ">=3.14"
 dependencies = [
     "anthropic>=1.2.0",
+    "claude-agent-sdk>=0.2.149",
     "fastapi>=0.141.1",
     "pydantic-settings>=2.15.0",
     "uvicorn[standard]>=0.52.4",
@@ -27,3 +28,6 @@ dev = [
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
 ]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]

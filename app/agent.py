@@ -1,88 +1,58 @@
+import inspect
 import json
 
-from anthropic import Anthropic
-
 from app.config import get_settings
-from app.tools import TOOL_DEFINITIONS, execute_tool
+from app.llm.base import LLMProvider
+from app.llm.factory import create_provider
+from app.llm.models import Message, ToolResult
+from app.tools import TOOLS
 
 
-settings = get_settings()
+async def run_agent(
+    user_message: str,
+    provider: LLMProvider | None = None,
+) -> str:
+    settings = get_settings()
+    provider = provider or create_provider(settings)
+    messages = [Message(role="user", text=user_message)]
 
-client = Anthropic(
-    api_key=settings.anthropic_api_key,
-    default_headers={
-        "anthropic-workspace-id": settings.anthropic_workspace_id
-    },
-)
+    for _ in range(settings.agent_max_steps):
+        response = await provider.run(messages, TOOLS)
 
-def run_agent(user_message: str) -> str:
-    messages = [
-        {
-            "role": "user",
-            "content": user_message,
-        }
-    ]
-
-    while True:
-        response = client.messages.create(
-            model=settings.anthropic_model,
-            max_tokens=1024,
-            system=(
-                "You are an enterprise operations assistant. "
-                "Use available tools when they are needed to "
-                "answer factual questions about internal systems."
-            ),
-            tools=TOOL_DEFINITIONS,
-            messages=messages,
-        )
-
-        if response.stop_reason != "tool_use":
-            text_blocks = [
-                block.text
-                for block in response.content
-                if block.type == "text"
-            ]
-
-            return "\n".join(text_blocks)
+        if response.stop_reason != "tool_use" or not response.tool_calls:
+            return response.text
 
         messages.append(
-            {
-                "role": "assistant",
-                "content": response.content,
-            }
+            Message(
+                role="assistant",
+                text=response.text,
+                tool_calls=response.tool_calls,
+            )
         )
 
-        tool_results = []
+        results: list[ToolResult] = []
+        tools_by_name = {tool.name: tool for tool in TOOLS}
 
-        for block in response.content:
-            if block.type != "tool_use":
-                continue
-
+        for call in response.tool_calls:
             try:
-                result = execute_tool(
-                    block.name,
-                    block.input,
+                definition = tools_by_name[call.name]
+                result = definition.handler(call.arguments)
+                if inspect.isawaitable(result):
+                    result = await result
+                tool_result = ToolResult(
+                    tool_call_id=call.id,
+                    content=json.dumps(result, default=str),
                 )
+            except Exception as exc:  # noqa: BLE001 - tool failures become results
+                tool_result = ToolResult(
+                    tool_call_id=call.id,
+                    content=str(exc),
+                    is_error=True,
+                )
+            results.append(tool_result)
 
-                tool_result = {
-                    "type": "tool_result",
-                    "tool_use_id": block.id,
-                    "content": json.dumps(result),
-                }
+        messages.append(Message(role="user", tool_results=tuple(results)))
 
-            except Exception as exc:
-                tool_result = {
-                    "type": "tool_result",
-                    "tool_use_id": block.id,
-                    "is_error": True,
-                    "content": str(exc),
-                }
-
-            tool_results.append(tool_result)
-
-        messages.append(
-            {
-                "role": "user",
-                "content": tool_results,
-            }
-        )
+    raise RuntimeError(
+        f"Agent exceeded the configured limit of {settings.agent_max_steps} steps"
+    )
