@@ -3,10 +3,7 @@ from pydantic import BaseModel
 
 from app.agent import run_agent
 
-
-app = FastAPI(
-    title="Secure Agent Platform",
-)
+app = FastAPI(title="Secure Agent Platform")
 
 
 class ChatRequest(BaseModel):
@@ -23,9 +20,6 @@ def health() -> dict[str, str]:
 
 
 @app.post("/chat", response_model=ChatResponse)
-def chat(request: ChatRequest) -> ChatResponse:
-    answer = run_agent(request.message)
-
-    return ChatResponse(
-        answer=answer,
-    )
+async def chat(request: ChatRequest) -> ChatResponse:
+    answer = await run_agent(request.message)
+    return ChatResponse(answer=answer)
