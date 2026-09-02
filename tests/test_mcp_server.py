@@ -1,0 +1,32 @@
+import pytest
+from mcp import Client
+
+from app.mcp_server import get_system_status, mcp
+
+
+@pytest.mark.asyncio
+async def test_mcp_server_lists_system_status_tool() -> None:
+    async with Client(mcp) as client:
+        response = await client.list_tools()
+
+    names = {tool.name for tool in response.tools}
+    assert "get_system_status" in names
+
+
+@pytest.mark.asyncio
+async def test_mcp_server_calls_system_status_tool() -> None:
+    async with Client(mcp) as client:
+        result = await client.call_tool(
+            "get_system_status",
+            {"service": "authentication"},
+        )
+
+    assert result.is_error is False
+    assert result.content
+
+
+def test_system_status_data() -> None:
+    assert get_system_status("authentication") == {
+        "status": "degraded",
+        "latency_ms": 640,
+    }

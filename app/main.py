@@ -23,8 +23,8 @@ def health() -> dict[str, str]:
 
 
 @app.post("/chat", response_model=ChatResponse)
-def chat(request: ChatRequest) -> ChatResponse:
-    answer = run_agent(request.message)
+async def chat(request: ChatRequest) -> ChatResponse:
+    answer = await run_agent(request.message)
 
     return ChatResponse(
         answer=answer,
