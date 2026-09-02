@@ -2,12 +2,15 @@ from typing import Any
 
 from mcp.server import MCPServer
 
+from app.database import get_recent_incidents
+
 # create a server
 mcp = MCPServer(
     "Secure Agent Platform Tools",
     instructions=(
-        "Tools for inspecting internal enterprise services. "
-        "Call get_system_status when current service health is needed."
+        "Tools for inspecting internal enterprise services and incidents. "
+        "Call get_system_status for current simulated health and "
+        "get_incidents for incident history stored in PostgreSQL."
     ),
 )
 
@@ -31,23 +34,6 @@ def get_system_status(service: str) -> dict[str, Any]:
         },
     }
 
-# using the decorator @mcp.tool(),
-# MCP can use: get_system_status(service: str)
-# to derive:
-# {
-#    "name": "get_system_status",
-#    "description": "Get the current operational status...",
-#    "inputSchema": {
-#        "type": "object",
-#        "properties": {
-#            "service": {
-#                "type": "string"
-#            }
-#        },
-#        "required": ["service"]
-#    }
-# }
-
     return services.get(
         service.lower(),
         {
@@ -55,6 +41,21 @@ def get_system_status(service: str) -> dict[str, Any]:
             "message": f"No service named '{service}'",
         },
     )
+
+
+@mcp.tool()
+async def get_incidents(
+    service: str | None = None,
+    limit: int = 10,
+) -> list[dict[str, Any]]:
+    """Get recent service incidents from PostgreSQL.
+
+    Args:
+        service: Optional service name such as authentication, billing, or documents.
+        limit: Maximum number of incidents to return, from 1 through 50.
+    """
+
+    return await get_recent_incidents(service=service, limit=limit)
 
 
 def main() -> None:

@@ -5,12 +5,13 @@ from app.mcp_server import get_system_status, mcp
 
 
 @pytest.mark.asyncio
-async def test_mcp_server_lists_system_status_tool() -> None:
+async def test_mcp_server_lists_expected_tools() -> None:
     async with Client(mcp) as client:
         response = await client.list_tools()
 
     names = {tool.name for tool in response.tools}
     assert "get_system_status" in names
+    assert "get_incidents" in names
 
 
 @pytest.mark.asyncio
