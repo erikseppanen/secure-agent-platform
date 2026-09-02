@@ -54,6 +54,8 @@ TOOL_DEFINITIONS = [
 
 def execute_tool(name: str, arguments: dict[str, Any]) -> Any:
     if name == "get_system_status":
+        # **arguments:
+        # expands {"service": "authentication"} => service="authentication"
         return get_system_status(**arguments)
 
     raise ValueError(f"Unknown tool: {name}")
