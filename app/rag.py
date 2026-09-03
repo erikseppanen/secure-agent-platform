@@ -50,6 +50,16 @@ def _vector_literal(values: list[float]) -> str:
     return "[" + ",".join(str(value) for value in values) + "]"
 
 
+def _normalize_metadata_value(value: str | None) -> str | None:
+    """Normalize optional metadata values used for storage and filtering."""
+
+    if value is None:
+        return None
+
+    normalized = value.strip().lower()
+    return normalized or None
+
+
 async def _connect() -> asyncpg.Connection:
     return await asyncpg.connect(get_settings().database_url)
 
@@ -81,7 +91,7 @@ async def _drop_chunk_table_if_dimension_changed(
 
 
 async def ensure_rag_schema(connection: asyncpg.Connection) -> None:
-    """Enable pgvector and create the vector/full-text search schema."""
+    """Enable pgvector and create vector, text-search, and metadata schema."""
 
     dimensions = get_settings().embedding_dimensions
     if dimensions <= 0 or dimensions > 2000:
@@ -110,6 +120,15 @@ async def ensure_rag_schema(connection: asyncpg.Connection) -> None:
         """
     )
     await connection.execute(
+        "ALTER TABLE document_chunks ADD COLUMN IF NOT EXISTS service TEXT"
+    )
+    await connection.execute(
+        "ALTER TABLE document_chunks ADD COLUMN IF NOT EXISTS document_type TEXT"
+    )
+    await connection.execute(
+        "ALTER TABLE document_chunks ADD COLUMN IF NOT EXISTS environment TEXT"
+    )
+    await connection.execute(
         """
         CREATE INDEX IF NOT EXISTS document_chunks_embedding_hnsw_idx
         ON document_chunks
@@ -123,9 +142,24 @@ async def ensure_rag_schema(connection: asyncpg.Connection) -> None:
         USING gin (search_vector)
         """
     )
+    await connection.execute(
+        "CREATE INDEX IF NOT EXISTS document_chunks_service_idx ON document_chunks (service)"
+    )
+    await connection.execute(
+        "CREATE INDEX IF NOT EXISTS document_chunks_document_type_idx ON document_chunks (document_type)"
+    )
+    await connection.execute(
+        "CREATE INDEX IF NOT EXISTS document_chunks_environment_idx ON document_chunks (environment)"
+    )
 
 
-async def ingest_document(source: str, content: str) -> int:
+async def ingest_document(
+    source: str,
+    content: str,
+    service: str | None = None,
+    document_type: str | None = None,
+    environment: str | None = None,
+) -> int:
     """Chunk, embed, and replace all stored chunks for one document."""
 
     chunks = chunk_text(content)
@@ -135,6 +169,10 @@ async def ingest_document(source: str, content: str) -> int:
     embeddings = await embed_texts(chunks)
     if len(embeddings) != len(chunks):
         raise RuntimeError("Embedding model returned an unexpected number of vectors")
+
+    normalized_service = _normalize_metadata_value(service)
+    normalized_document_type = _normalize_metadata_value(document_type)
+    normalized_environment = _normalize_metadata_value(environment)
 
     connection = await _connect()
     try:
@@ -147,11 +185,27 @@ async def ingest_document(source: str, content: str) -> int:
             )
             await connection.executemany(
                 """
-                INSERT INTO document_chunks (source, chunk_index, content, embedding)
-                VALUES ($1, $2, $3, $4::vector)
+                INSERT INTO document_chunks (
+                    source,
+                    chunk_index,
+                    content,
+                    embedding,
+                    service,
+                    document_type,
+                    environment
+                )
+                VALUES ($1, $2, $3, $4::vector, $5, $6, $7)
                 """,
                 [
-                    (source, index, chunk, _vector_literal(embedding))
+                    (
+                        source,
+                        index,
+                        chunk,
+                        _vector_literal(embedding),
+                        normalized_service,
+                        normalized_document_type,
+                        normalized_environment,
+                    )
                     for index, (chunk, embedding) in enumerate(
                         zip(chunks, embeddings, strict=True)
                     )
@@ -166,14 +220,20 @@ async def ingest_document(source: str, content: str) -> int:
 async def semantic_search_documents(
     query: str,
     limit: int = 5,
+    service: str | None = None,
+    document_type: str | None = None,
+    environment: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Return document chunks nearest to a natural-language query."""
+    """Return semantically similar chunks within optional metadata filters."""
 
     if not query.strip():
         return []
 
     safe_limit = max(1, min(limit, 10))
     query_vector = _vector_literal(await embed_text(query))
+    service = _normalize_metadata_value(service)
+    document_type = _normalize_metadata_value(document_type)
+    environment = _normalize_metadata_value(environment)
 
     connection = await _connect()
     try:
@@ -185,12 +245,21 @@ async def semantic_search_documents(
                 source,
                 chunk_index,
                 content,
+                service,
+                document_type,
+                environment,
                 1 - (embedding <=> $1::vector) AS similarity
             FROM document_chunks
+            WHERE ($2::text IS NULL OR service = $2)
+              AND ($3::text IS NULL OR document_type = $3)
+              AND ($4::text IS NULL OR environment = $4)
             ORDER BY embedding <=> $1::vector
-            LIMIT $2
+            LIMIT $5
             """,
             query_vector,
+            service,
+            document_type,
+            environment,
             safe_limit,
         )
 
@@ -231,6 +300,9 @@ def _fuse_ranked_results(
                 "source": row["source"],
                 "chunk_index": row["chunk_index"],
                 "content": row["content"],
+                "service": row.get("service"),
+                "document_type": row.get("document_type"),
+                "environment": row.get("environment"),
                 "vector_similarity": None,
                 "keyword_score": None,
                 "hybrid_score": 0.0,
@@ -263,8 +335,11 @@ def _fuse_ranked_results(
 async def hybrid_search_documents(
     query: str,
     limit: int = 5,
+    service: str | None = None,
+    document_type: str | None = None,
+    environment: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Combine semantic and PostgreSQL full-text search for document retrieval."""
+    """Hybrid-search documents after applying optional metadata filters."""
 
     if not query.strip():
         return []
@@ -272,6 +347,9 @@ async def hybrid_search_documents(
     safe_limit = max(1, min(limit, 10))
     candidate_limit = _hybrid_candidate_limit(safe_limit)
     query_vector = _vector_literal(await embed_text(query))
+    service = _normalize_metadata_value(service)
+    document_type = _normalize_metadata_value(document_type)
+    environment = _normalize_metadata_value(environment)
 
     connection = await _connect()
     try:
@@ -284,12 +362,21 @@ async def hybrid_search_documents(
                 source,
                 chunk_index,
                 content,
+                service,
+                document_type,
+                environment,
                 1 - (embedding <=> $1::vector) AS vector_similarity
             FROM document_chunks
+            WHERE ($2::text IS NULL OR service = $2)
+              AND ($3::text IS NULL OR document_type = $3)
+              AND ($4::text IS NULL OR environment = $4)
             ORDER BY embedding <=> $1::vector
-            LIMIT $2
+            LIMIT $5
             """,
             query_vector,
+            service,
+            document_type,
+            environment,
             candidate_limit,
         )
 
@@ -300,16 +387,25 @@ async def hybrid_search_documents(
                 source,
                 chunk_index,
                 content,
+                service,
+                document_type,
+                environment,
                 ts_rank_cd(
                     search_vector,
                     websearch_to_tsquery('english', $1::text)
                 ) AS keyword_score
             FROM document_chunks
             WHERE search_vector @@ websearch_to_tsquery('english', $1::text)
+              AND ($2::text IS NULL OR service = $2)
+              AND ($3::text IS NULL OR document_type = $3)
+              AND ($4::text IS NULL OR environment = $4)
             ORDER BY keyword_score DESC
-            LIMIT $2
+            LIMIT $5
             """,
             query,
+            service,
+            document_type,
+            environment,
             candidate_limit,
         )
 

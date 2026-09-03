@@ -47,18 +47,27 @@ async def get_incidents(
 async def search_documents(
     query: str,
     limit: int = 5,
+    service: str | None = None,
+    document_type: str | None = None,
+    environment: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Hybrid-search internal runbooks and documentation.
-
-    Combines semantic vector similarity with PostgreSQL full-text search,
-    then fuses the two rankings with Reciprocal Rank Fusion.
+    """Hybrid-search internal documentation with optional metadata filters.
 
     Args:
         query: Natural-language description or exact terms to retrieve.
         limit: Maximum matching chunks to return, from 1 through 10.
+        service: Optional service scope, such as authentication or billing.
+        document_type: Optional type such as runbook or policy.
+        environment: Optional environment such as production or staging.
     """
 
-    return await hybrid_search_documents(query=query, limit=limit)
+    return await hybrid_search_documents(
+        query=query,
+        limit=limit,
+        service=service,
+        document_type=document_type,
+        environment=environment,
+    )
 
 
 def main() -> None:

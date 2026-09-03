@@ -26,6 +26,9 @@ CREATE TABLE IF NOT EXISTS document_chunks (
     content TEXT NOT NULL,
     embedding VECTOR(384) NOT NULL,
     search_vector TSVECTOR GENERATED ALWAYS AS (to_tsvector('english', content)) STORED,
+    service TEXT,
+    document_type TEXT,
+    environment TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE (source, chunk_index)
 );
@@ -37,3 +40,12 @@ CREATE INDEX IF NOT EXISTS document_chunks_embedding_hnsw_idx
 CREATE INDEX IF NOT EXISTS document_chunks_search_gin_idx
     ON document_chunks
     USING gin (search_vector);
+
+CREATE INDEX IF NOT EXISTS document_chunks_service_idx
+    ON document_chunks (service);
+
+CREATE INDEX IF NOT EXISTS document_chunks_document_type_idx
+    ON document_chunks (document_type);
+
+CREATE INDEX IF NOT EXISTS document_chunks_environment_idx
+    ON document_chunks (environment);

@@ -29,6 +29,12 @@ def test_hybrid_candidate_limit_expands_search_pool() -> None:
     assert rag._hybrid_candidate_limit(5) == 20
 
 
+def test_normalize_metadata_value() -> None:
+    assert rag._normalize_metadata_value(" Authentication ") == "authentication"
+    assert rag._normalize_metadata_value("   ") is None
+    assert rag._normalize_metadata_value(None) is None
+
+
 def test_rrf_rewards_results_found_by_both_searches() -> None:
     vector_rows = [
         {
@@ -36,6 +42,9 @@ def test_rrf_rewards_results_found_by_both_searches() -> None:
             "source": "authentication.md",
             "chunk_index": 0,
             "content": "token validation and clock skew",
+            "service": "authentication",
+            "document_type": "runbook",
+            "environment": "production",
             "vector_similarity": 0.90,
         },
         {
@@ -43,6 +52,9 @@ def test_rrf_rewards_results_found_by_both_searches() -> None:
             "source": "billing.md",
             "chunk_index": 0,
             "content": "payment webhook retries",
+            "service": "billing",
+            "document_type": "runbook",
+            "environment": "production",
             "vector_similarity": 0.80,
         },
     ]
@@ -52,6 +64,9 @@ def test_rrf_rewards_results_found_by_both_searches() -> None:
             "source": "documents.md",
             "chunk_index": 0,
             "content": "token validation reference",
+            "service": "documents",
+            "document_type": "runbook",
+            "environment": "production",
             "keyword_score": 1.2,
         },
         {
@@ -59,6 +74,9 @@ def test_rrf_rewards_results_found_by_both_searches() -> None:
             "source": "authentication.md",
             "chunk_index": 0,
             "content": "token validation and clock skew",
+            "service": "authentication",
+            "document_type": "runbook",
+            "environment": "production",
             "keyword_score": 0.9,
         },
     ]
@@ -66,6 +84,9 @@ def test_rrf_rewards_results_found_by_both_searches() -> None:
     results = rag._fuse_ranked_results(vector_rows, keyword_rows, limit=3)
 
     assert results[0]["source"] == "authentication.md"
+    assert results[0]["service"] == "authentication"
+    assert results[0]["document_type"] == "runbook"
+    assert results[0]["environment"] == "production"
     assert results[0]["vector_similarity"] == pytest.approx(0.90)
     assert results[0]["keyword_score"] == pytest.approx(0.9)
     assert results[0]["hybrid_score"] > results[1]["hybrid_score"]

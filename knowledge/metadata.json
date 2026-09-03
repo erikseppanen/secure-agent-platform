@@ -1,0 +1,17 @@
+{
+  "authentication-runbook.md": {
+    "service": "authentication",
+    "document_type": "runbook",
+    "environment": "production"
+  },
+  "billing-runbook.md": {
+    "service": "billing",
+    "document_type": "runbook",
+    "environment": "production"
+  },
+  "documents-runbook.md": {
+    "service": "documents",
+    "document_type": "runbook",
+    "environment": "production"
+  }
+}
