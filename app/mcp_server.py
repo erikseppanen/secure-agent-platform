@@ -3,7 +3,7 @@ from typing import Any
 from mcp.server import MCPServer
 
 from app.database import get_recent_incidents
-from app.rag import semantic_search_documents
+from app.rag import hybrid_search_documents
 
 # create a server
 mcp = MCPServer(
@@ -48,14 +48,17 @@ async def search_documents(
     query: str,
     limit: int = 5,
 ) -> list[dict[str, Any]]:
-    """Semantically search internal runbooks and documentation.
+    """Hybrid-search internal runbooks and documentation.
+
+    Combines semantic vector similarity with PostgreSQL full-text search,
+    then fuses the two rankings with Reciprocal Rank Fusion.
 
     Args:
-        query: Natural-language description of the information to retrieve.
+        query: Natural-language description or exact terms to retrieve.
         limit: Maximum matching chunks to return, from 1 through 10.
     """
 
-    return await semantic_search_documents(query=query, limit=limit)
+    return await hybrid_search_documents(query=query, limit=limit)
 
 
 def main() -> None:

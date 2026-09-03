@@ -23,3 +23,49 @@ def test_vector_literal() -> None:
 def test_chunk_text_rejects_invalid_overlap() -> None:
     with pytest.raises(ValueError):
         rag.chunk_text("one two three", chunk_size_words=3, overlap_words=3)
+
+
+def test_hybrid_candidate_limit_expands_search_pool() -> None:
+    assert rag._hybrid_candidate_limit(5) == 20
+
+
+def test_rrf_rewards_results_found_by_both_searches() -> None:
+    vector_rows = [
+        {
+            "id": 1,
+            "source": "authentication.md",
+            "chunk_index": 0,
+            "content": "token validation and clock skew",
+            "vector_similarity": 0.90,
+        },
+        {
+            "id": 2,
+            "source": "billing.md",
+            "chunk_index": 0,
+            "content": "payment webhook retries",
+            "vector_similarity": 0.80,
+        },
+    ]
+    keyword_rows = [
+        {
+            "id": 3,
+            "source": "documents.md",
+            "chunk_index": 0,
+            "content": "token validation reference",
+            "keyword_score": 1.2,
+        },
+        {
+            "id": 1,
+            "source": "authentication.md",
+            "chunk_index": 0,
+            "content": "token validation and clock skew",
+            "keyword_score": 0.9,
+        },
+    ]
+
+    results = rag._fuse_ranked_results(vector_rows, keyword_rows, limit=3)
+
+    assert results[0]["source"] == "authentication.md"
+    assert results[0]["vector_similarity"] == pytest.approx(0.90)
+    assert results[0]["keyword_score"] == pytest.approx(0.9)
+    assert results[0]["hybrid_score"] > results[1]["hybrid_score"]

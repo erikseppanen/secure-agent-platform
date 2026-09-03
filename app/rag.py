@@ -1,4 +1,4 @@
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 import asyncpg
@@ -9,6 +9,9 @@ from app.embeddings import embed_text, embed_texts
 
 DEFAULT_CHUNK_SIZE_WORDS = 180
 DEFAULT_CHUNK_OVERLAP_WORDS = 30
+DEFAULT_RRF_K = 60
+HYBRID_CANDIDATE_MULTIPLIER = 4
+MAX_HYBRID_CANDIDATES = 50
 
 
 def chunk_text(
@@ -78,7 +81,7 @@ async def _drop_chunk_table_if_dimension_changed(
 
 
 async def ensure_rag_schema(connection: asyncpg.Connection) -> None:
-    """Enable pgvector and create the chunk table/index if needed."""
+    """Enable pgvector and create the vector/full-text search schema."""
 
     dimensions = get_settings().embedding_dimensions
     if dimensions <= 0 or dimensions > 2000:
@@ -101,9 +104,23 @@ async def ensure_rag_schema(connection: asyncpg.Connection) -> None:
     )
     await connection.execute(
         """
+        ALTER TABLE document_chunks
+        ADD COLUMN IF NOT EXISTS search_vector TSVECTOR
+        GENERATED ALWAYS AS (to_tsvector('english', content)) STORED
+        """
+    )
+    await connection.execute(
+        """
         CREATE INDEX IF NOT EXISTS document_chunks_embedding_hnsw_idx
         ON document_chunks
         USING hnsw (embedding vector_cosine_ops)
+        """
+    )
+    await connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS document_chunks_search_gin_idx
+        ON document_chunks
+        USING gin (search_vector)
         """
     )
 
@@ -184,5 +201,122 @@ async def semantic_search_documents(
             }
             for row in rows
         ]
+    finally:
+        await connection.close()
+
+
+def _hybrid_candidate_limit(limit: int) -> int:
+    """Retrieve more candidates than we ultimately return before rank fusion."""
+
+    return min(
+        max(limit * HYBRID_CANDIDATE_MULTIPLIER, limit),
+        MAX_HYBRID_CANDIDATES,
+    )
+
+
+def _fuse_ranked_results(
+    vector_rows: Sequence[Mapping[str, Any]],
+    keyword_rows: Sequence[Mapping[str, Any]],
+    limit: int,
+    rrf_k: int = DEFAULT_RRF_K,
+) -> list[dict[str, Any]]:
+    """Combine vector and keyword rankings with Reciprocal Rank Fusion."""
+
+    combined: dict[int, dict[str, Any]] = {}
+
+    def get_result(row: Mapping[str, Any]) -> dict[str, Any]:
+        row_id = int(row["id"])
+        if row_id not in combined:
+            combined[row_id] = {
+                "source": row["source"],
+                "chunk_index": row["chunk_index"],
+                "content": row["content"],
+                "vector_similarity": None,
+                "keyword_score": None,
+                "hybrid_score": 0.0,
+            }
+        return combined[row_id]
+
+    for rank, row in enumerate(vector_rows, start=1):
+        result = get_result(row)
+        result["vector_similarity"] = float(row["vector_similarity"])
+        result["hybrid_score"] += 1.0 / (rrf_k + rank)
+
+    for rank, row in enumerate(keyword_rows, start=1):
+        result = get_result(row)
+        result["keyword_score"] = float(row["keyword_score"])
+        result["hybrid_score"] += 1.0 / (rrf_k + rank)
+
+    def sort_key(result: dict[str, Any]) -> tuple[float, float, float]:
+        vector_similarity = result["vector_similarity"]
+        keyword_score = result["keyword_score"]
+        return (
+            float(result["hybrid_score"]),
+            -1.0 if vector_similarity is None else float(vector_similarity),
+            -1.0 if keyword_score is None else float(keyword_score),
+        )
+
+    ranked = sorted(combined.values(), key=sort_key, reverse=True)
+    return ranked[:limit]
+
+
+async def hybrid_search_documents(
+    query: str,
+    limit: int = 5,
+) -> list[dict[str, Any]]:
+    """Combine semantic and PostgreSQL full-text search for document retrieval."""
+
+    if not query.strip():
+        return []
+
+    safe_limit = max(1, min(limit, 10))
+    candidate_limit = _hybrid_candidate_limit(safe_limit)
+    query_vector = _vector_literal(await embed_text(query))
+
+    connection = await _connect()
+    try:
+        await ensure_rag_schema(connection)
+
+        vector_rows: Sequence[asyncpg.Record] = await connection.fetch(
+            """
+            SELECT
+                id,
+                source,
+                chunk_index,
+                content,
+                1 - (embedding <=> $1::vector) AS vector_similarity
+            FROM document_chunks
+            ORDER BY embedding <=> $1::vector
+            LIMIT $2
+            """,
+            query_vector,
+            candidate_limit,
+        )
+
+        keyword_rows: Sequence[asyncpg.Record] = await connection.fetch(
+            """
+            SELECT
+                id,
+                source,
+                chunk_index,
+                content,
+                ts_rank_cd(
+                    search_vector,
+                    websearch_to_tsquery('english', $1::text)
+                ) AS keyword_score
+            FROM document_chunks
+            WHERE search_vector @@ websearch_to_tsquery('english', $1::text)
+            ORDER BY keyword_score DESC
+            LIMIT $2
+            """,
+            query,
+            candidate_limit,
+        )
+
+        return _fuse_ranked_results(
+            vector_rows=vector_rows,
+            keyword_rows=keyword_rows,
+            limit=safe_limit,
+        )
     finally:
         await connection.close()
