@@ -9,6 +9,9 @@ class Settings(BaseSettings):
     anthropic_model: str = "claude-sonnet-4-6"
     database_url: str = "postgresql://sap:sap@localhost:5432/sap"
 
+    embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
+    embedding_dimensions: int = 384
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

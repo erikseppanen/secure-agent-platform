@@ -16,92 +16,131 @@ MCP client
 stdio transport
    |
 MCP server
-   |----------------------|
-   |                      |
-get_system_status     get_incidents
-(simulated data)          |
-                         PostgreSQL
+   |----------------------|------------------------|
+   |                      |                        |
+get_system_status     get_incidents       search_documents
+(simulated data)          |                        |
+                         PostgreSQL          local embedding
+                                                   |
+                                            pgvector cosine
+                                            similarity search
+                                                   |
+                                           document chunks
 ```
 
-The model does not own the tool implementations. The agent discovers tools from the MCP server with `tools/list`, translates the MCP schemas to Anthropic tool definitions, and executes model-selected tools through `tools/call`.
+The agent discovers tools from the MCP server with `tools/list` and executes model-selected tools through `tools/call`.
 
-`get_incidents` is our first real external capability. It queries PostgreSQL through a constrained, parameterized read-only function instead of exposing arbitrary SQL to the model.
+The RAG path adds a separate ingestion pipeline:
+
+```text
+knowledge/*.md
+     |
+     v
+chunking + overlap
+     |
+     v
+local Sentence Transformers model
+     |
+     v
+PostgreSQL + pgvector
+     |
+     v
+search_documents MCP tool
+     |
+     v
+Claude uses retrieved chunks
+```
+
+The default embedding model is `sentence-transformers/all-MiniLM-L6-v2`, which produces 384-dimensional vectors. Embeddings are generated locally; no OpenAI API key is required.
 
 ## Local setup
 
-Copy the environment template and add your Anthropic credentials:
+Copy the environment template:
 
 ```bash
 cp .env.example .env
 ```
 
-Start PostgreSQL:
+Fill in the Anthropic credentials. The embedding model configuration can normally be left at its defaults.
 
-```bash
-docker compose up -d postgres
-```
-
-The first startup executes `db/init.sql`, which creates and seeds the `incidents` table. The default connection string is:
-
-```text
-postgresql://sap:sap@localhost:5432/sap
-```
-
-Install/sync Python dependencies:
+Install/sync dependencies:
 
 ```bash
 uv sync
 ```
 
-Run the tests:
+The first embedding operation downloads the configured Sentence Transformers model, then subsequent embedding work runs locally.
+
+Start PostgreSQL with pgvector installed:
+
+```bash
+docker compose up -d postgres
+```
+
+The image is `pgvector/pgvector:pg17`. If an older RAG table exists with a different vector dimension, the application drops and recreates only the derived `document_chunks` table; the incident table is left intact.
+
+## Ingest the sample knowledge base
+
+```bash
+uv run python -m app.ingest knowledge
+```
+
+That command reads `.md` and `.txt` files, splits them into overlapping chunks, embeds each chunk locally, and stores the chunks and vectors in PostgreSQL. Re-running ingestion replaces the stored chunks for each source file.
+
+## Run tests and the API
 
 ```bash
 uv run pytest
-```
-
-Run the API:
-
-```bash
 uv run uvicorn app.main:app --reload
 ```
 
-Then open `http://127.0.0.1:8000/docs` and call `POST /chat`.
+Then call `POST /chat` from `http://127.0.0.1:8000/docs`.
 
-Try questions such as:
+Try:
 
 ```text
-What incidents have happened recently?
+How much clock skew does token validation allow?
 ```
 
-```text
-Show me the recent authentication incidents.
-```
-
-The resulting path is:
+Expected path:
 
 ```text
-Claude tool_use: get_incidents
-        |
-        v
-agent.py
+Claude tool_use: search_documents
         |
         v
 MCP tools/call
         |
         v
-mcp_server.py
+semantic_search_documents()
         |
         v
-get_recent_incidents()
+embed user's query locally
         |
         v
-parameterized PostgreSQL SELECT
+ORDER BY embedding <=> query_vector
+        |
+        v
+closest document chunks
         |
         v
 MCP tool result
         |
         v
 Claude final answer
+```
+
+Other examples:
+
+```text
+When should an authentication deployment be rolled back?
+What is the billing webhook retry schedule?
+At what queue depth is the documents service considered critical?
+```
+
+The existing `get_incidents` PostgreSQL MCP tool remains available for questions such as:
+
+```text
+Show me the recent authentication incidents.
 ```
 
 ## Inspect the MCP server directly

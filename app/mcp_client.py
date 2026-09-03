@@ -41,5 +41,6 @@ def tool_result_text(result: CallToolResult) -> str:
 
 def create_mcp_client() -> Client:
     """Create a client for the local stdio MCP server."""
-    # the MCP client starts the server process and communicates with it over its standard input and output.
+    # Create an MCP-speaking client using standard input/output as its transport to
+    # the server process described by these parameters.
     return Client(stdio_client(SERVER_PARAMETERS))

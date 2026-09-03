@@ -1,3 +1,5 @@
+CREATE EXTENSION IF NOT EXISTS vector;
+
 CREATE TABLE IF NOT EXISTS incidents (
     id BIGSERIAL PRIMARY KEY,
     service TEXT NOT NULL,
@@ -16,3 +18,17 @@ VALUES
     ('documents', 'medium', 'resolved', 'Document indexing queue accumulated backlog.', NOW() - INTERVAL '1 day'),
     ('billing', 'low', 'resolved', 'Delayed webhook delivery from payment processor.', NOW() - INTERVAL '3 days'),
     ('authentication', 'critical', 'resolved', 'Token validation failures affected a subset of requests.', NOW() - INTERVAL '8 days');
+
+CREATE TABLE IF NOT EXISTS document_chunks (
+    id BIGSERIAL PRIMARY KEY,
+    source TEXT NOT NULL,
+    chunk_index INTEGER NOT NULL,
+    content TEXT NOT NULL,
+    embedding VECTOR(384) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (source, chunk_index)
+);
+
+CREATE INDEX IF NOT EXISTS document_chunks_embedding_hnsw_idx
+    ON document_chunks
+    USING hnsw (embedding vector_cosine_ops);

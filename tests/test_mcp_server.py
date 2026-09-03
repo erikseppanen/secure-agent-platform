@@ -12,6 +12,7 @@ async def test_mcp_server_lists_expected_tools() -> None:
     names = {tool.name for tool in response.tools}
     assert "get_system_status" in names
     assert "get_incidents" in names
+    assert "search_documents" in names
 
 
 @pytest.mark.asyncio

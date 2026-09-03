@@ -3,43 +3,33 @@ from typing import Any
 from mcp.server import MCPServer
 
 from app.database import get_recent_incidents
+from app.rag import semantic_search_documents
 
 # create a server
 mcp = MCPServer(
     "Secure Agent Platform Tools",
     instructions=(
-        "Tools for inspecting internal enterprise services and incidents. "
-        "Call get_system_status for current simulated health and "
-        "get_incidents for incident history stored in PostgreSQL."
+        "Tools for inspecting internal enterprise services, incidents, and "
+        "documentation. Call get_system_status for current simulated health, "
+        "get_incidents for incident history, and search_documents for runbooks, "
+        "procedures, policies, and other internal knowledge."
     ),
 )
 
-# register a Python function
+
 @mcp.tool()
 def get_system_status(service: str) -> dict[str, Any]:
     """Get the current operational status and latency of an internal service."""
 
     services = {
-        "billing": {
-            "status": "healthy",
-            "latency_ms": 87,
-        },
-        "authentication": {
-            "status": "degraded",
-            "latency_ms": 640,
-        },
-        "documents": {
-            "status": "healthy",
-            "latency_ms": 110,
-        },
+        "billing": {"status": "healthy", "latency_ms": 87},
+        "authentication": {"status": "degraded", "latency_ms": 640},
+        "documents": {"status": "healthy", "latency_ms": 110},
     }
 
     return services.get(
         service.lower(),
-        {
-            "status": "unknown",
-            "message": f"No service named '{service}'",
-        },
+        {"status": "unknown", "message": f"No service named '{service}'"},
     )
 
 
@@ -48,14 +38,24 @@ async def get_incidents(
     service: str | None = None,
     limit: int = 10,
 ) -> list[dict[str, Any]]:
-    """Get recent service incidents from PostgreSQL.
-
-    Args:
-        service: Optional service name such as authentication, billing, or documents.
-        limit: Maximum number of incidents to return, from 1 through 50.
-    """
+    """Get recent service incidents from PostgreSQL."""
 
     return await get_recent_incidents(service=service, limit=limit)
+
+
+@mcp.tool()
+async def search_documents(
+    query: str,
+    limit: int = 5,
+) -> list[dict[str, Any]]:
+    """Semantically search internal runbooks and documentation.
+
+    Args:
+        query: Natural-language description of the information to retrieve.
+        limit: Maximum matching chunks to return, from 1 through 10.
+    """
+
+    return await semantic_search_documents(query=query, limit=limit)
 
 
 def main() -> None:
