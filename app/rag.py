@@ -5,6 +5,7 @@ import asyncpg
 
 from app.config import get_settings
 from app.embeddings import embed_text, embed_texts
+from app.reranker import rerank_documents
 
 
 DEFAULT_CHUNK_SIZE_WORDS = 180
@@ -12,6 +13,8 @@ DEFAULT_CHUNK_OVERLAP_WORDS = 30
 DEFAULT_RRF_K = 60
 HYBRID_CANDIDATE_MULTIPLIER = 4
 MAX_HYBRID_CANDIDATES = 50
+RERANK_CANDIDATE_MULTIPLIER = 3
+MAX_RERANK_CANDIDATES = 20
 
 
 def chunk_text(
@@ -283,6 +286,15 @@ def _hybrid_candidate_limit(limit: int) -> int:
     )
 
 
+def _rerank_candidate_limit(limit: int) -> int:
+    """Keep a broader RRF result set for the more precise reranking stage."""
+
+    return min(
+        max(limit * RERANK_CANDIDATE_MULTIPLIER, limit),
+        MAX_RERANK_CANDIDATES,
+    )
+
+
 def _fuse_ranked_results(
     vector_rows: Sequence[Mapping[str, Any]],
     keyword_rows: Sequence[Mapping[str, Any]],
@@ -339,13 +351,14 @@ async def hybrid_search_documents(
     document_type: str | None = None,
     environment: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Hybrid-search documents after applying optional metadata filters."""
+    """Hybrid-search, fuse candidates, and rerank the best chunks."""
 
     if not query.strip():
         return []
 
     safe_limit = max(1, min(limit, 10))
-    candidate_limit = _hybrid_candidate_limit(safe_limit)
+    rerank_limit = _rerank_candidate_limit(safe_limit)
+    candidate_limit = _hybrid_candidate_limit(rerank_limit)
     query_vector = _vector_literal(await embed_text(query))
     service = _normalize_metadata_value(service)
     document_type = _normalize_metadata_value(document_type)
@@ -409,10 +422,16 @@ async def hybrid_search_documents(
             candidate_limit,
         )
 
-        return _fuse_ranked_results(
+        fused_candidates = _fuse_ranked_results(
             vector_rows=vector_rows,
             keyword_rows=keyword_rows,
-            limit=safe_limit,
+            limit=rerank_limit,
         )
     finally:
         await connection.close()
+
+    return await rerank_documents(
+        query=query,
+        candidates=fused_candidates,
+        limit=safe_limit,
+    )
