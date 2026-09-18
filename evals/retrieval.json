@@ -1,0 +1,101 @@
+[
+  {
+    "id": "auth-clock-skew",
+    "query": "How much clock skew can token validation tolerate?",
+    "relevant_chunks": [
+      {"source": "authentication-runbook.md", "chunk_index": 0}
+    ],
+    "expected_answer": "60 seconds"
+  },
+  {
+    "id": "auth-rollback-latency",
+    "query": "When should an authentication deployment be rolled back because of latency?",
+    "relevant_chunks": [
+      {"source": "authentication-runbook.md", "chunk_index": 0}
+    ],
+    "expected_answer": "When p95 login latency remains above 800 milliseconds for 15 minutes."
+  },
+  {
+    "id": "auth-owner",
+    "query": "Who owns an authentication incident?",
+    "filters": {"service": "authentication"},
+    "relevant_chunks": [
+      {"source": "authentication-runbook.md", "chunk_index": 0}
+    ],
+    "expected_answer": "The Identity Platform on-call engineer."
+  },
+  {
+    "id": "auth-key-rotation",
+    "query": "What should happen to the old signing key during identity-provider key rotation?",
+    "relevant_chunks": [
+      {"source": "authentication-runbook.md", "chunk_index": 0}
+    ],
+    "expected_answer": "Keep the previous signing key available for 24 hours."
+  },
+  {
+    "id": "billing-retry-schedule",
+    "query": "What is the retry schedule for failed payment-provider webhooks?",
+    "relevant_chunks": [
+      {"source": "billing-runbook.md", "chunk_index": 0}
+    ],
+    "expected_answer": "Approximately 1, 5, 15, and 60 minutes."
+  },
+  {
+    "id": "billing-idempotency",
+    "query": "What should be checked before manually replaying a billing event?",
+    "filters": {"service": "billing"},
+    "relevant_chunks": [
+      {"source": "billing-runbook.md", "chunk_index": 0}
+    ],
+    "expected_answer": "Verify that the provider event ID has not already been processed."
+  },
+  {
+    "id": "billing-escalation",
+    "query": "When should delayed webhook delivery be escalated?",
+    "relevant_chunks": [
+      {"source": "billing-runbook.md", "chunk_index": 0}
+    ],
+    "expected_answer": "When the oldest unprocessed webhook is more than 30 minutes old."
+  },
+  {
+    "id": "billing-recovery",
+    "query": "What should happen after the payment provider recovers?",
+    "relevant_chunks": [
+      {"source": "billing-runbook.md", "chunk_index": 0}
+    ],
+    "expected_answer": "Allow automatic retries to drain the queue before manually replaying failures."
+  },
+  {
+    "id": "documents-critical-depth",
+    "query": "At what indexing queue depth is the documents service considered critical?",
+    "relevant_chunks": [
+      {"source": "documents-runbook.md", "chunk_index": 0}
+    ],
+    "expected_answer": "Above 20,000 documents."
+  },
+  {
+    "id": "documents-reindex-prep",
+    "query": "What should be done before starting a full document reindex?",
+    "relevant_chunks": [
+      {"source": "documents-runbook.md", "chunk_index": 0}
+    ],
+    "expected_answer": "Pause normal indexing consumers, record queue depth, and verify source objects are available."
+  },
+  {
+    "id": "documents-upload-impact",
+    "query": "Can users still upload files while indexing is delayed?",
+    "filters": {"service": "documents"},
+    "relevant_chunks": [
+      {"source": "documents-runbook.md", "chunk_index": 0}
+    ],
+    "expected_answer": "Yes. Uploads can remain available even when indexing is delayed."
+  },
+  {
+    "id": "documents-resume-consumers",
+    "query": "When can normal indexing consumers resume after a reindex?",
+    "relevant_chunks": [
+      {"source": "documents-runbook.md", "chunk_index": 0}
+    ],
+    "expected_answer": "After the reindex worker is stable and the backlog is decreasing."
+  }
+]
