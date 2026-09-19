@@ -1,11 +1,17 @@
+import logging
+from time import perf_counter
 from typing import Any
 
 from mcp.server import MCPServer
 
 from app.database import get_recent_incidents
+from app.observability import configure_logging, log_event
 from app.rag import hybrid_search_documents
 
-# create a server
+
+configure_logging()
+logger = logging.getLogger(__name__)
+
 mcp = MCPServer(
     "Secure Agent Platform Tools",
     instructions=(
@@ -21,16 +27,28 @@ mcp = MCPServer(
 def get_system_status(service: str) -> dict[str, Any]:
     """Get the current operational status and latency of an internal service."""
 
+    log_event(
+        logger,
+        "mcp.server.get_system_status.request",
+        payload={"service": service},
+    )
+
     services = {
         "billing": {"status": "healthy", "latency_ms": 87},
         "authentication": {"status": "degraded", "latency_ms": 640},
         "documents": {"status": "healthy", "latency_ms": 110},
     }
 
-    return services.get(
+    result = services.get(
         service.lower(),
         {"status": "unknown", "message": f"No service named '{service}'"},
     )
+    log_event(
+        logger,
+        "mcp.server.get_system_status.response",
+        payload={"result": result},
+    )
+    return result
 
 
 @mcp.tool()
@@ -40,7 +58,21 @@ async def get_incidents(
 ) -> list[dict[str, Any]]:
     """Get recent service incidents from PostgreSQL."""
 
-    return await get_recent_incidents(service=service, limit=limit)
+    started = perf_counter()
+    log_event(
+        logger,
+        "mcp.server.get_incidents.request",
+        payload={"service": service, "limit": limit},
+    )
+    result = await get_recent_incidents(service=service, limit=limit)
+    log_event(
+        logger,
+        "mcp.server.get_incidents.response",
+        duration_ms=round((perf_counter() - started) * 1000, 1),
+        result_count=len(result),
+        payload={"result": result},
+    )
+    return result
 
 
 @mcp.tool()
@@ -51,23 +83,32 @@ async def search_documents(
     document_type: str | None = None,
     environment: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Hybrid-search internal documentation with optional metadata filters.
+    """Hybrid-search internal documentation with optional metadata filters."""
 
-    Args:
-        query: Natural-language description or exact terms to retrieve.
-        limit: Maximum matching chunks to return, from 1 through 10.
-        service: Optional service scope, such as authentication or billing.
-        document_type: Optional type such as runbook or policy.
-        environment: Optional environment such as production or staging.
-    """
-
-    return await hybrid_search_documents(
-        query=query,
-        limit=limit,
-        service=service,
-        document_type=document_type,
-        environment=environment,
+    started = perf_counter()
+    arguments = {
+        "query": query,
+        "limit": limit,
+        "service": service,
+        "document_type": document_type,
+        "environment": environment,
+    }
+    log_event(
+        logger,
+        "rag.request",
+        payload=arguments,
     )
+
+    result = await hybrid_search_documents(**arguments)
+
+    log_event(
+        logger,
+        "rag.response",
+        duration_ms=round((perf_counter() - started) * 1000, 1),
+        result_count=len(result),
+        payload={"results": result},
+    )
+    return result
 
 
 def main() -> None:

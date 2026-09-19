@@ -13,6 +13,10 @@ class Settings(BaseSettings):
     embedding_dimensions: int = 384
     reranker_model: str = "cross-encoder/ms-marco-MiniLM-L6-v2"
 
+    log_level: str = "INFO"
+    trace_payloads: bool = True
+    trace_max_chars: int = 2000
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

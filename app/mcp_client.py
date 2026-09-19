@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 from typing import Any
 
@@ -6,12 +7,22 @@ from mcp import Client, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.types import CallToolResult, TextContent, Tool
 
-# Start another Python process by running python -m app.mcp_server
-# (mcp_server.py will be running in a separate process)
-SERVER_PARAMETERS = StdioServerParameters(
-    command=sys.executable,
-    args=["-m", "app.mcp_server"],
-)
+from app.observability import active_trace_id
+
+
+def _server_parameters() -> StdioServerParameters:
+    """Describe the MCP subprocess and propagate the current trace ID."""
+
+    env = os.environ.copy()
+    trace_id = active_trace_id()
+    if trace_id is not None:
+        env["SAP_TRACE_ID"] = trace_id
+
+    return StdioServerParameters(
+        command=sys.executable,
+        args=["-m", "app.mcp_server"],
+        env=env,
+    )
 
 
 def anthropic_tool_definition(tool: Tool) -> dict[str, Any]:
@@ -41,6 +52,4 @@ def tool_result_text(result: CallToolResult) -> str:
 
 def create_mcp_client() -> Client:
     """Create a client for the local stdio MCP server."""
-    # Create an MCP-speaking client using standard input/output as its transport to
-    # the server process described by these parameters.
-    return Client(stdio_client(SERVER_PARAMETERS))
+    return Client(stdio_client(_server_parameters()))
