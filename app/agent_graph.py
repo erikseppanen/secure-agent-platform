@@ -1,7 +1,8 @@
 import logging
+import operator
 from functools import lru_cache
 from time import perf_counter
-from typing import Any, TypedDict
+from typing import Annotated, Any, TypedDict
 
 from anthropic import AsyncAnthropic
 from langgraph.graph import END, START, StateGraph
@@ -22,13 +23,13 @@ SYSTEM_PROMPT = (
 )
 
 
-class AgentState(TypedDict):
-    """State passed between LangGraph nodes during one agent run."""
+class AgentState(TypedDict, total=False):
+    """State persisted and passed between LangGraph nodes."""
 
-    messages: list[dict[str, Any]]
+    messages: Annotated[list[dict[str, Any]], operator.add]
     trace_id: str
     turn: int
-    response: Any | None
+    stop_reason: str | None
     answer: str
 
 
@@ -45,12 +46,21 @@ def get_anthropic_client() -> AsyncAnthropic:
     )
 
 
+def _content_dicts(content: list[Any]) -> list[dict[str, Any]]:
+    """Convert Anthropic response blocks into checkpoint-safe dictionaries."""
+
+    return [
+        block.model_dump() if hasattr(block, "model_dump") else dict(block)
+        for block in content
+    ]
+
+
 async def call_model(state: AgentState) -> dict[str, Any]:
     """Ask Claude what to do next and append its response to graph state."""
 
     settings = get_settings()
     tools = get_anthropic_tools()
-    turn = state["turn"] + 1
+    turn = state.get("turn", 0) + 1
     started = perf_counter()
 
     log_event(
@@ -58,9 +68,9 @@ async def call_model(state: AgentState) -> dict[str, Any]:
         "claude.request",
         model=settings.anthropic_model,
         turn=turn,
-        message_count=len(state["messages"]),
+        message_count=len(state.get("messages", [])),
         payload={
-            "messages": state["messages"],
+            "messages": state.get("messages", []),
             "tools": tools,
         },
     )
@@ -70,38 +80,40 @@ async def call_model(state: AgentState) -> dict[str, Any]:
         max_tokens=1024,
         system=SYSTEM_PROMPT,
         tools=tools,
-        messages=state["messages"],
+        messages=state.get("messages", []),
     )
 
     usage = getattr(response, "usage", None)
+    stop_reason = response.stop_reason
+    content = _content_dicts(response.content)
+
     log_event(
         logger,
         "claude.response",
         turn=turn,
-        stop_reason=response.stop_reason,
+        stop_reason=stop_reason,
         duration_ms=round((perf_counter() - started) * 1000, 1),
         input_tokens=getattr(usage, "input_tokens", None),
         output_tokens=getattr(usage, "output_tokens", None),
-        payload={"content": response.content},
+        payload={"content": content},
     )
 
     text_blocks = [
-        block.text
-        for block in response.content
-        if block.type == "text"
+        block["text"]
+        for block in content
+        if block.get("type") == "text"
     ]
-    answer = "\n".join(text_blocks) if response.stop_reason != "tool_use" else ""
+    answer = "\n".join(text_blocks) if stop_reason != "tool_use" else ""
 
     return {
         "messages": [
-            *state["messages"],
             {
                 "role": "assistant",
-                "content": response.content,
-            },
+                "content": content,
+            }
         ],
         "turn": turn,
-        "response": response,
+        "stop_reason": stop_reason,
         "answer": answer,
     }
 
@@ -109,19 +121,15 @@ async def call_model(state: AgentState) -> dict[str, Any]:
 def route_after_model(state: AgentState) -> str:
     """Route to tools when Claude requested one; otherwise finish the graph."""
 
-    response = state["response"]
-    destination = (
-        "execute_tools"
-        if response is not None and response.stop_reason == "tool_use"
-        else END
-    )
+    stop_reason = state.get("stop_reason")
+    destination = "execute_tools" if stop_reason == "tool_use" else END
 
     log_event(
         logger,
         "langgraph.route",
         from_node="call_model",
         to_node=destination,
-        stop_reason=getattr(response, "stop_reason", None),
+        stop_reason=stop_reason,
     )
     return destination
 
@@ -129,30 +137,39 @@ def route_after_model(state: AgentState) -> str:
 async def execute_tools(state: AgentState) -> dict[str, Any]:
     """Execute Claude tool requests through the persistent MCP client."""
 
-    response = state["response"]
-    if response is None:
-        raise RuntimeError("execute_tools requires a Claude response")
+    messages = state.get("messages", [])
+    if not messages:
+        raise RuntimeError("execute_tools requires an assistant message")
+
+    assistant_message = messages[-1]
+    content = assistant_message.get("content")
+    if not isinstance(content, list):
+        raise RuntimeError("execute_tools requires structured assistant content")
 
     mcp_client = get_mcp_client()
     tool_results = []
 
-    for block in response.content:
-        if block.type != "tool_use":
+    for block in content:
+        if block.get("type") != "tool_use":
             continue
+
+        tool_name = block["name"]
+        tool_use_id = block["id"]
+        tool_input = block.get("input", {})
 
         tool_started = perf_counter()
         log_event(
             logger,
             "mcp.tool.request",
-            tool=block.name,
-            tool_use_id=block.id,
-            payload={"arguments": block.input},
+            tool=tool_name,
+            tool_use_id=tool_use_id,
+            payload={"arguments": tool_input},
         )
 
-        tool_arguments = dict(block.input)
+        tool_arguments = dict(tool_input)
         tool_arguments[INTERNAL_TRACE_ARGUMENT] = state["trace_id"]
         result = await mcp_client.call_tool(
-            block.name,
+            tool_name,
             tool_arguments,
         )
         result_text = tool_result_text(result)
@@ -160,8 +177,8 @@ async def execute_tools(state: AgentState) -> dict[str, Any]:
         log_event(
             logger,
             "mcp.tool.response",
-            tool=block.name,
-            tool_use_id=block.id,
+            tool=tool_name,
+            tool_use_id=tool_use_id,
             is_error=result.is_error,
             duration_ms=round((perf_counter() - tool_started) * 1000, 1),
             payload={"result": result_text},
@@ -170,7 +187,7 @@ async def execute_tools(state: AgentState) -> dict[str, Any]:
         tool_results.append(
             {
                 "type": "tool_result",
-                "tool_use_id": block.id,
+                "tool_use_id": tool_use_id,
                 "is_error": result.is_error,
                 "content": result_text,
             }
@@ -178,18 +195,17 @@ async def execute_tools(state: AgentState) -> dict[str, Any]:
 
     return {
         "messages": [
-            *state["messages"],
             {
                 "role": "user",
                 "content": tool_results,
-            },
+            }
         ],
-        "response": None,
+        "stop_reason": None,
     }
 
 
-def build_agent_graph():
-    """Compile the agent's explicit Claude -> tools -> Claude state machine."""
+def build_agent_graph(checkpointer: Any | None = None):
+    """Compile the agent graph, optionally with durable checkpoint storage."""
 
     builder = StateGraph(AgentState)
     builder.add_node("call_model", call_model)
@@ -197,7 +213,4 @@ def build_agent_graph():
     builder.add_edge(START, "call_model")
     builder.add_conditional_edges("call_model", route_after_model)
     builder.add_edge("execute_tools", "call_model")
-    return builder.compile()
-
-
-agent_graph = build_agent_graph()
+    return builder.compile(checkpointer=checkpointer)
