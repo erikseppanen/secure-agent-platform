@@ -280,3 +280,16 @@ async def test_rejected_sensitive_tool_is_not_executed_and_claude_gets_error_res
     assert tool_result["type"] == "tool_result"
     assert tool_result["is_error"] is True
     assert "approval denied" in tool_result["content"].lower()
+
+
+@pytest.mark.asyncio
+async def test_resume_without_pending_approval_is_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.agent as agent_module
+
+    graph = build_agent_graph(checkpointer=InMemorySaver())
+    monkeypatch.setattr(agent_module, "get_agent_graph", lambda: graph)
+
+    with pytest.raises(agent_module.NoPendingApprovalError):
+        await agent_module.resume_agent("thread-without-interrupt", approved=True)

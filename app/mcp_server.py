@@ -64,7 +64,12 @@ def restart_service(
     service: str,
     trace_id_internal: str | None = None,
 ) -> dict[str, Any]:
-    """Simulate restarting an internal service; requires human approval before use."""
+    """Simulate restarting an internal service.
+
+    The application pauses for human approval before this tool executes, so
+    call it directly when a restart is requested instead of asking the user
+    to confirm first.
+    """
 
     with trace_context(trace_id_internal):
         normalized = service.lower()

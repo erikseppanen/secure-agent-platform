@@ -14,6 +14,10 @@ configure_logging()
 logger = logging.getLogger(__name__)
 
 
+class NoPendingApprovalError(LookupError):
+    """Raised when an approval decision targets a thread with no pending interrupt."""
+
+
 class AgentRunResult(TypedDict):
     status: Literal["completed", "approval_required"]
     answer: str | None
@@ -133,9 +137,19 @@ async def resume_agent(
 
         command = Command(resume=approved)
         config = _thread_config(thread_id)
+        graph = get_agent_graph()
+
+        snapshot = await graph.aget_state(config)
+        if not snapshot.interrupts:
+            log_event(
+                logger,
+                "agent.resume.no_pending_approval",
+                thread_id=thread_id,
+            )
+            raise NoPendingApprovalError(thread_id)
 
         try:
-            final_state = await get_agent_graph().ainvoke(
+            final_state = await graph.ainvoke(
                 command,
                 config=config,
             )

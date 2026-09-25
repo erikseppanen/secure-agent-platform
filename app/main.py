@@ -3,10 +3,15 @@ from contextlib import asynccontextmanager
 from typing import Annotated, Any, Literal
 from uuid import uuid4
 
-from fastapi import Body, FastAPI
+from fastapi import Body, FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
-from app.agent import AgentRunResult, resume_agent, run_agent
+from app.agent import (
+    AgentRunResult,
+    NoPendingApprovalError,
+    resume_agent,
+    run_agent,
+)
 from app.checkpoint_runtime import (
     start_checkpoint_runtime,
     stop_checkpoint_runtime,
@@ -99,8 +104,14 @@ async def approval(
         Body(openapi_examples=APPROVAL_OPENAPI_EXAMPLES),
     ],
 ) -> ChatResponse:
-    result = await resume_agent(
-        request.thread_id,
-        request.approved,
-    )
+    try:
+        result = await resume_agent(
+            request.thread_id,
+            request.approved,
+        )
+    except NoPendingApprovalError:
+        raise HTTPException(
+            status_code=409,
+            detail="No approval is pending for this thread.",
+        ) from None
     return _chat_response(request.thread_id, result)
