@@ -143,6 +143,33 @@ The existing `get_incidents` PostgreSQL MCP tool remains available for questions
 Show me the recent authentication incidents.
 ```
 
+## Interactive learning labs
+
+This branch includes a repo-local learning environment designed to make the control flow visible while you interact with the real API.
+
+Start the application yourself:
+
+```bash
+uv run uvicorn app.main:app --reload
+```
+
+Then use these views side by side:
+
+- `http://127.0.0.1:8000/learn` — guided learning labs.
+- `http://127.0.0.1:8000/docs` — Swagger with named request examples.
+- `http://127.0.0.1:8000/logs` — live expandable structured JSON logs.
+- your terminal — the actual Uvicorn process and normal console output.
+
+The guides in [`labs/`](labs/) walk through plain model responses, safe MCP tool calls, RAG, persistent LangGraph state, and human-in-the-loop interruption/resume.
+
+On macOS or Linux, after the server is already running, you can open the three browser views with:
+
+```bash
+./scripts/open-lab
+```
+
+That helper only opens browser tabs. It does not start the server and does not send requests.
+
 ## Inspect the MCP server directly
 
 ```bash

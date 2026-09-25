@@ -1,9 +1,9 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from uuid import uuid4
 
-from fastapi import FastAPI
+from fastapi import Body, FastAPI
 from pydantic import BaseModel, Field
 
 from app.agent import AgentRunResult, resume_agent, run_agent
@@ -11,6 +11,9 @@ from app.checkpoint_runtime import (
     start_checkpoint_runtime,
     stop_checkpoint_runtime,
 )
+from app.demo_examples import APPROVAL_OPENAPI_EXAMPLES, CHAT_OPENAPI_EXAMPLES
+from app.learning import router as learning_router
+from app.log_viewer import router as log_viewer_router
 from app.mcp_runtime import start_mcp_runtime, stop_mcp_runtime
 
 
@@ -33,6 +36,8 @@ app = FastAPI(
     title="Secure Agent Platform",
     lifespan=lifespan,
 )
+app.include_router(log_viewer_router)
+app.include_router(learning_router)
 
 
 class ChatRequest(BaseModel):
@@ -76,14 +81,24 @@ def health() -> dict[str, str]:
 
 
 @app.post("/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest) -> ChatResponse:
+async def chat(
+    request: Annotated[
+        ChatRequest,
+        Body(openapi_examples=CHAT_OPENAPI_EXAMPLES),
+    ],
+) -> ChatResponse:
     thread_id = request.thread_id or uuid4().hex
     result = await run_agent(request.message, thread_id)
     return _chat_response(thread_id, result)
 
 
 @app.post("/approval", response_model=ChatResponse)
-async def approval(request: ApprovalDecisionRequest) -> ChatResponse:
+async def approval(
+    request: Annotated[
+        ApprovalDecisionRequest,
+        Body(openapi_examples=APPROVAL_OPENAPI_EXAMPLES),
+    ],
+) -> ChatResponse:
     result = await resume_agent(
         request.thread_id,
         request.approved,

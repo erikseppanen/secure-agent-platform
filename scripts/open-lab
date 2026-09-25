@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+base_url="${SAP_BASE_URL:-http://127.0.0.1:8000}"
+urls=(
+  "${base_url}/learn"
+  "${base_url}/docs"
+  "${base_url}/logs"
+)
+
+if command -v open >/dev/null 2>&1; then
+  open "${urls[@]}"
+elif command -v xdg-open >/dev/null 2>&1; then
+  for url in "${urls[@]}"; do
+    xdg-open "$url" >/dev/null 2>&1 &
+  done
+else
+  printf 'Open these URLs in your browser:\n'
+  printf '  %s\n' "${urls[@]}"
+fi

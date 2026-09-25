@@ -1,7 +1,11 @@
+import json
+import logging
+
 import pytest
 
 from app.config import get_settings
 from app.observability import (
+    JsonLineFormatter,
     active_trace_id,
     payload_preview,
     trace_context,
@@ -32,3 +36,28 @@ def test_payload_preview_truncates_large_payloads() -> None:
 
     assert preview.endswith("...<truncated>")
     assert len(preview) < 100
+
+
+def test_json_line_formatter_keeps_structured_payload_nested() -> None:
+    record = logging.LogRecord(
+        name="app.test",
+        level=logging.INFO,
+        pathname=__file__,
+        lineno=1,
+        msg="console message",
+        args=(),
+        exc_info=None,
+    )
+    record.structured_event = {
+        "event": "test.event",
+        "trace_id": "trace-123",
+        "payload": {"nested": {"value": 7}},
+    }
+
+    output = json.loads(JsonLineFormatter().format(record))
+
+    assert output["level"] == "INFO"
+    assert output["logger"] == "app.test"
+    assert output["event"] == "test.event"
+    assert output["trace_id"] == "trace-123"
+    assert output["payload"] == {"nested": {"value": 7}}

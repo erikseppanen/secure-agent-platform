@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     reranker_model: str = "cross-encoder/ms-marco-MiniLM-L6-v2"
 
     log_level: str = "INFO"
+    log_file: str = "logs/app.jsonl"
+    log_viewer_enabled: bool = True
     trace_payloads: bool = True
     trace_max_chars: int = 2000
 
