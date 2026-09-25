@@ -19,8 +19,10 @@ mcp = MCPServer(
     instructions=(
         "Tools for inspecting internal enterprise services, incidents, and "
         "documentation. Call get_system_status for current simulated health, "
-        "get_incidents for incident history, and search_documents for runbooks, "
-        "procedures, policies, and other internal knowledge."
+        "get_incidents for incident history, search_documents for runbooks, "
+        "procedures, policies, and other internal knowledge, and restart_service "
+        "only when a service restart is requested. restart_service is a simulated "
+        "state-changing operation and requires application-controlled human approval."
     ),
 )
 
@@ -52,6 +54,45 @@ def get_system_status(
         log_event(
             logger,
             "mcp.server.get_system_status.response",
+            payload={"result": result},
+        )
+        return result
+
+
+@mcp.tool()
+def restart_service(
+    service: str,
+    trace_id_internal: str | None = None,
+) -> dict[str, Any]:
+    """Simulate restarting an internal service; requires human approval before use."""
+
+    with trace_context(trace_id_internal):
+        normalized = service.lower()
+        log_event(
+            logger,
+            "mcp.server.restart_service.request",
+            payload={"service": normalized},
+        )
+
+        known_services = {"billing", "authentication", "documents"}
+        if normalized not in known_services:
+            result = {
+                "service": normalized,
+                "action": "restart",
+                "status": "not_found",
+                "simulated": True,
+            }
+        else:
+            result = {
+                "service": normalized,
+                "action": "restart",
+                "status": "completed",
+                "simulated": True,
+            }
+
+        log_event(
+            logger,
+            "mcp.server.restart_service.response",
             payload={"result": result},
         )
         return result
